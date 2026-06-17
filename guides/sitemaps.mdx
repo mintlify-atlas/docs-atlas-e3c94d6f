@@ -1,0 +1,93 @@
+---
+title: "Sitemap Detection and Traversal in Spinney"
+sidebarTitle: "Sitemaps"
+description: "Spinney detects XML sitemaps from robots.txt and uses them as the crawl seed. Learn how sitemap index files, URL sets, and fallback behavior work."
+---
+
+When Spinney parses a site's robots.txt and finds a `Sitemap:` directive, it uses that sitemap URL as the starting point for the crawl instead of the bare origin URL. Sitemap files are parsed by the internal `ParseXML` class, which uses `xml2js` under the hood and handles both sitemap index files (containing pointers to other sitemaps) and standard URL sets (containing individual page URLs).
+
+## How sitemap detection works
+
+During robots.txt parsing, `ParseText.onSiteMap()` scans each line for the pattern `Sitemap: http...`. When a match is found, it slices the string from the first occurrence of `http` onward and stores it in `this.site`, setting `isSiteMap = true`:
+
+```typescript
+onSiteMap(line: string): void {
+  if (RegExps.SiteMap.test(line)) {
+    const index = line.indexOf('http');
+    if (Not(index === -1)) {
+      this.isSiteMap = true;
+      this.site += line.slice(index);
+    }
+  }
+}
+```
+
+After the robots.txt stream ends, `parse.end()` returns `{ forbidden, site, isSiteMap }`. Back in `setUp()`, Spinney checks the `isSiteMap` flag and seeds the crawl accordingly:
+
+```typescript
+const sites = Array(
+  context.isSiteMap ? context.site : this.decodeURL.origin
+);
+this._setUp(sites);
+```
+
+When `isSiteMap` is `true`, the sitemap URL is passed to `_setUp()` as the single starting URL. Spinney then fetches it and routes it through `ParseXML` because the response `Content-Type` will contain `xml`.
+
+## Sitemap index vs URL set
+
+`ParseXML.write()` uses `xml2js`'s `parseStringPromise` to turn the raw XML string into a JavaScript object, then checks which root element is present:
+
+- **`sitemapindex`** — iterates over `raw.sitemapindex.sitemap` and pushes each `loc[0]` value into `context.sites`. These child sitemap URLs are returned as the next batch of sites to crawl, so each one is fetched and parsed in turn.
+- **`urlset`** — iterates over `raw.urlset.url` and pushes each `loc[0]` value directly into `context.sites`. These are individual page URLs returned to the crawl queue.
+
+```xml Sitemap index example
+<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <sitemap>
+    <loc>https://example.com/sitemap-products.xml</loc>
+  </sitemap>
+  <sitemap>
+    <loc>https://example.com/sitemap-blog.xml</loc>
+  </sitemap>
+</sitemapindex>
+```
+
+```xml URL set example
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://example.com/page-1</loc></url>
+  <url><loc>https://example.com/page-2</loc></url>
+</urlset>
+```
+
+For the sitemap index, `ParseXML` returns `['https://example.com/sitemap-products.xml', 'https://example.com/sitemap-blog.xml']`. These are fed back into `_setUp()`, which fetches each one and parses the resulting URL sets. For the URL set, the individual page URLs are returned directly and queued for HTML crawling.
+
+## Fallback behavior
+
+If robots.txt contains no `Sitemap:` directive, `isSiteMap` remains `false` and `setUp()` falls back to `this.decodeURL.origin` as the single seed URL. Spinney fetches that page, parses all `href` attributes found in the HTML, and recursively follows approved links using the standard [URL approval flow](/guides/robots-txt#url-approval-flow). No sitemap is required for Spinney to crawl a site — it will discover pages by following links just as a browser would.
+
+## Content-Type detection
+
+Spinney does not rely solely on the robots.txt sitemap entry to detect XML. In `httpXMLOrDocument()`, every response is inspected via `isHeaderXML()`, which checks both the `Content-Type` and `content-type` response headers for the substring `xml`:
+
+```typescript
+isHeaderXML(headers: AxiosResponseHeaders): boolean {
+  const isXML = (header: string) => Not(header.indexOf('xml') === -1);
+
+  if (headers['Content-Type']) {
+    return isXML(headers['Content-Type']);
+  }
+  if (headers['content-type']) {
+    return isXML(headers['content-type']);
+  }
+  return false;
+}
+```
+
+When a response is detected as XML, the response stream is piped through `StringWritable` to collect the full body, and then `ParseXML.promise()` parses it. When the response is HTML (no `xml` in the Content-Type), it is piped through htmlparser2's `WritableStream` instead. This means that even if a sitemap URL is discovered mid-crawl via an `href` attribute rather than through robots.txt, it will still be processed correctly.
+
+<Tip>
+If you already know a site's sitemap URL, you can pass it directly as the constructor URL and set `overide: true` to skip the robots.txt fetch entirely. This reduces the initial setup step and starts the sitemap traversal immediately.
+
+```typescript
+const spinney = new Spinney('https://example.com/sitemap.xml', { overide: true });
+```
+</Tip>

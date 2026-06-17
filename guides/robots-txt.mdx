@@ -1,0 +1,93 @@
+---
+title: "How Spinney Handles robots.txt Rules"
+sidebarTitle: "robots.txt"
+description: "Spinney automatically fetches and parses robots.txt before crawling. Learn how Disallow rules are enforced and how to override them with the overide option."
+---
+
+Before Spinney issues a single crawl request, it fetches `/robots.txt` from the target domain. The file is streamed into the internal `ParseText` class, which reads it line by line, extracts every `Disallow:` path listed under `User-agent: *`, and stores those paths in a `Set<string>` called `forbidden`. Every candidate URL is checked against this set before it is queued, so restricted paths are never fetched.
+
+## What gets parsed
+
+`ParseText` processes the robots.txt stream one chunk at a time, splitting each chunk on newlines and passing each line through three handlers in sequence:
+
+- **`onUserAgent(line)`** — tests the line against the `User-agent:` regex. When a `User-agent: *` line is detected, it sets an internal `isParsing = true` flag. Any other `User-agent:` value sets `isParsing = false`, so only wildcard rules are collected.
+- **`onDisallow(line)`** — when `isParsing` is true and the line matches the `Disallow:` pattern, the path (everything from the first `/` onward) is added to the `forbidden` Set.
+- **`onSiteMap(line)`** — when the line matches the `Sitemap:` pattern and contains an `http` URL, `isSiteMap` is set to `true` and the URL is stored in `site` for use as the crawl seed.
+
+When the stream ends, `parse.end()` returns `{ forbidden, site, isSiteMap }` and resets the parser.
+
+Given the following robots.txt:
+
+```text
+User-agent: *
+Disallow: /admin
+Disallow: /private/
+
+User-agent: Googlebot
+Disallow: /staging
+
+Sitemap: https://example.com/sitemap.xml
+```
+
+Spinney will build `forbidden = Set { '/admin', '/private/' }`. The `/staging` disallow is ignored because it is scoped to `Googlebot`, not `*`. The sitemap URL is captured and used as the crawl seed (see [Sitemaps](/guides/sitemaps)).
+
+## How Disallow enforcement works
+
+Once `forbidden` is populated, every candidate URL goes through `isForbidden()` before being added to the crawl queue:
+
+```typescript
+isForbidden(site: string): boolean {
+  if (Not(this.seen.has(site))) {
+    this.seen.add(site);
+    return this._isForbidden(site);
+  }
+  return false;
+}
+```
+
+The outer `isForbidden()` first checks the `seen` Set. If the URL has already been processed it returns `false` immediately, enforcing deduplication across the entire crawl. For new URLs it delegates to `_isForbidden()`, which iterates over every path in `forbidden` and calls `isMatch()`:
+
+```typescript
+isMatch(testPathname: string, basePathname: string): boolean {
+  if (RegExps.ForwardSlashWord.test(testPathname)) {
+    const index = testPathname.indexOf('/');
+    const hostname = this.decodeURL.hostname;
+
+    if (Not(index === -1)) {
+      const pathname = testPathname.slice(index);
+      return RegExps.getHostnameAndPathname(hostname, pathname).test(basePathname);
+    }
+
+    return RegExps.getHostnameAndPathname(hostname, testPathname).test(basePathname);
+  }
+  return false;
+}
+```
+
+`isMatch()` builds a RegExp from the site's hostname and the disallowed path pattern, then tests the candidate URL against it. If _any_ forbidden path matches, `_isForbidden()` returns `false` and the URL is dropped from the crawl queue. URLs that pass all checks return `true` and proceed to crawling.
+
+## The `overide` option
+
+Passing `options.overide = true` to the constructor bypasses the entire forbidden-path check. Internally, `_isForbidden()` checks `this.isOveride` first and returns `true` immediately — meaning every URL on the origin domain is treated as allowed:
+
+```typescript
+const spinney = new Spinney('https://example.com/', { overide: true });
+```
+
+<Warning>
+Only set `overide: true` on sites you own or have been explicitly granted permission to crawl. Bypassing robots.txt on third-party sites may violate their terms of service and applicable laws.
+</Warning>
+
+## What happens if robots.txt is missing
+
+If the HTTP request for `/robots.txt` fails (network error, non-200 status, empty response), the `forbidden` Set is never populated and remains empty. `_isForbidden()` iterates over an empty set, finds no matches, and returns `true` for every URL — so all paths on the origin domain are eligible for crawling. Spinney will still apply its own deduplication via the `seen` Set and will still validate hostnames with `isApproved()`.
+
+## URL approval flow
+
+Every `href` attribute extracted from a crawled page travels through the following pipeline before it can enter the crawl queue:
+
+1. **Extraction** — htmlparser2's `WritableStream` fires `onattribute` for every attribute; `href` values are collected into a `sites` array.
+2. **Resolution** — `getURL(pathname)` converts relative paths (those beginning with `/`) into absolute URLs using the origin from the constructor argument.
+3. **Hostname check** — `isApproved()` validates that the resolved URL's hostname starts with the origin hostname, preventing Spinney from wandering off-domain.
+4. **Deduplication + forbidden check** — `isForbidden()` rejects URLs already present in `seen` and runs `_isForbidden()` against the `forbidden` Set for new ones.
+5. **Queued** — URLs that pass all checks are returned from `getApproved()` and passed to `_setUp()` for the next crawl batch.

@@ -1,0 +1,47 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "Spinney",
+  "projectDescription": "An efficient and flexible Observable-based web scraper for Node.js that respects robots.txt, handles sitemaps, and emits crawled pages as an RxJS stream.",
+  "theme": "luma",
+  "primaryColor": "#7c7c80",
+  "lightColor": "#151c28",
+  "darkColor": "#f2f2f2",
+  "navigation": {
+    "groups": [
+      {
+        "group": "Get Started",
+        "pages": ["introduction", "installation", "quickstart"]
+      },
+      {
+        "group": "Guides",
+        "pages": ["guides/robots-txt", "guides/sitemaps", "guides/options-config", "guides/error-handling"]
+      },
+      {
+        "group": "API Reference",
+        "pages": ["api/spinney-class", "api/subscribe", "api/methods", "api/types"]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Observable-based API built on RxJS — subscribe to crawled pages as a stream",
+    "Automatic robots.txt parsing and enforcement of Disallow rules",
+    "XML sitemap detection and traversal",
+    "Configurable Axios HTTP client with retry logic and exponential backoff",
+    "Batched concurrent page fetching (4 pages per batch)",
+    "Custom htmlparser2 callbacks for attribute, text, and element events",
+    "Deduplication — each URL is visited only once per scrape session",
+    "TypeScript-first with full type definitions"
+  ],
+  "publicApiSurface": [
+    "new Spinney(site: string, options?: Options, config?: AxiosRequestConfig)",
+    "spinney.subscribe({ next, error, complete, ontext, onattribute }): Subscription",
+    "spinney.resume(): void",
+    "spinney.pause(): void",
+    "spinney.getURL(pathname: string): string",
+    "spinney.isMatch(testPathname: string, basePathname: string): boolean",
+    "spinney.isApproved(site: string): boolean",
+    "spinney.getApproved(hrefs: string[]): string[]",
+    "Options: { overide?: boolean; debug?: boolean }",
+    "subscription.unsubscribe(): void"
+  ]
+}

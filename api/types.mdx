@@ -1,0 +1,125 @@
+---
+title: "TypeScript Types and Constants Reference"
+sidebarTitle: "Types"
+description: "Complete TypeScript type definitions used in Spinney: Options, internal constants MAX_RETRIES and RegExps, and the ParseText and ParseXML internal classes."
+---
+
+Spinney ships its type definitions in `lib/index.d.ts`, generated from the TypeScript source at build time. Only two things are part of the public API: the `Spinney` class itself and the `Options` type. The internal helper classes (`ParseText`, `ParseXML`, `StringWritable`) and the constants module are not re-exported, but they are documented here for completeness and for developers who want to understand how the library works under the hood.
+
+---
+
+## `Options`
+
+`Options` is the only exported type besides the `Spinney` class. It is the shape of the second argument to the `Spinney` constructor.
+
+```typescript
+type Options = {
+  overide?: boolean; // default: false
+  debug?: boolean;   // default: false
+};
+```
+
+<ParamField path="overide" type="boolean">
+  When `true`, bypasses all robots.txt `Disallow` checks. Every URL on the target domain is treated as crawlable regardless of what robots.txt says. Defaults to `false`.
+
+  <Warning>
+    The property name is spelled **`overide`** (single `r`) in the source and type definition. This is an intentional quirk of the library — using `override` (double `r`) will silently have no effect.
+  </Warning>
+</ParamField>
+
+<ParamField path="debug" type="boolean">
+  When `true`, non-fatal internal errors are written to stderr via `console.error(error?.message)`. This includes HTTP errors that are retried and URL parsing failures that are swallowed. Defaults to `false`.
+</ParamField>
+
+### Usage
+
+```typescript
+import Spinney from 'spinney';
+import type { Options } from 'spinney'; // type-only import
+
+const options: Options = {
+  overide: false,
+  debug: true,
+};
+
+const spinney = new Spinney('https://example.com/', options);
+```
+
+---
+
+## Constants
+
+These values are defined in `src/constants.ts` and used internally throughout the library.
+
+### `MAX_RETRIES`
+
+```typescript
+const MAX_RETRIES = 5;
+```
+
+The maximum number of times Spinney will retry a failing HTTP request before giving up. On each retry the timeout is stepped up by `(retries * 1000) / 4` milliseconds. When the retry count reaches `MAX_RETRIES`, a fatal error is thrown and the Observable's `error` callback is invoked. HTTP 404 responses are treated as permanent and do not consume a retry slot — they resolve immediately.
+
+### `RegExps`
+
+A collection of pre-compiled regular expressions and factory functions used internally for robots.txt parsing and URL matching.
+
+| Key | Pattern / Description |
+|-----|----------------------|
+| `Allow` | `/^([Aa]llow:) (\/.+)$/g` — matches `Allow:` lines in robots.txt |
+| `Disallow` | `/^([Dd]isallow:) (\/.+)$/g` — matches `Disallow: /path` lines in robots.txt |
+| `SiteMap` | `/^([Ss]itemap:) (.+)$/` — matches `Sitemap: https://...` lines in robots.txt |
+| `UserAgent` | `/^([Uu]ser-[Aa]gent:) (.+)$/g` — matches `User-agent:` lines to detect `*` (all bots) blocks |
+| `ForwardSlashWord` | `/\/(\w+)/gi` — matches path segments beginning with `/`; used in `isMatch()` to validate that a test path has at least one segment |
+| `HttpOrHttps` | Full URL pattern — matches `http://` or `https://` URLs within text |
+| `NewLine` | `/[^\r\n]+/g` — splits robots.txt byte chunks into individual lines |
+| `SpecialCharacter` | `/[^a-zA-Z0-9 ]/g` — matches non-alphanumeric characters |
+| `getURL()` | Factory function — returns a new `RegExp` that validates whether a string is a syntactically correct absolute URL. Called by `isApproved()` on every candidate URL. |
+| `getHostnameAndPathname(hostname, pathname)` | Factory function — returns `new RegExp('(.*\\.)?<hostname>.*(<pathname>)')`. Built dynamically in `isMatch()` using the scraper's hostname and the disallow path being tested. |
+
+---
+
+## Internal classes
+
+These classes are not exported from `lib/index.js` and are instantiated privately inside `Spinney`. They are documented here for developers reading the source.
+
+### `ParseText`
+
+Located at `src/ParseText.ts`. Processes a streaming robots.txt response. Its `write(chunk: Buffer)` method is registered on the Axios data stream's `'data'` event. Each chunk is converted to a string, split on newlines using `RegExps.NewLine`, and each line is passed through three handlers:
+
+- **`onSiteMap(line)`** — if the line matches `RegExps.SiteMap`, extracts the sitemap URL and sets `isSiteMap = true`.
+- **`onUserAgent(line)`** — if the line matches `RegExps.UserAgent`, toggles `isParsing` based on whether the agent value is `*` (all crawlers).
+- **`onDisallow(line)`** — if `isParsing` is `true` and the line matches `RegExps.Disallow`, extracts the disallowed path and adds it to the `forbidden` Set.
+
+Calling `end()` returns `{ forbidden, site, isSiteMap }` and resets the instance. The `forbidden` Set is passed to `Spinney.setForbidden()` to populate the instance-level `forbidden` Set used by `_isForbidden()`.
+
+### `ParseXML`
+
+Located at `src/ParseXML.ts`. Wraps `xml2js.parseStringPromise` to extract URLs from sitemap XML documents. Its `promise(data: string)` method accepts the full buffered XML string and returns a Promise that resolves to `{ sites: string[] }`.
+
+Supports two XML formats:
+- **`<sitemapindex>`** — iterates `raw.sitemapindex.sitemap` and collects each `<loc>` value. Used for sitemap index files that reference child sitemaps.
+- **`<urlset>`** — iterates `raw.urlset.url` and collects each `<loc>` value. Used for standard sitemap files listing page URLs.
+
+The returned `sites` array is fed back into `_setUp()` as the next URL batch to crawl.
+
+### `StringWritable`
+
+Located at `src/StringWritable.ts`. A `node:stream.Writable` subclass that accumulates streamed response chunks into a single string. Uses a `StringDecoder` from `node:string_decoder` to correctly handle multi-byte UTF-8 characters that may span chunk boundaries. The accumulated string is available on `.string` after the stream finishes.
+
+Used to buffer the full response body of XML sitemap requests before passing the complete string to `ParseXML.promise()`.
+
+### `Not(condition)`
+
+Located at `src/utils/Not.ts`.
+
+```typescript
+function Not(condition: boolean): boolean {
+  return condition === false;
+}
+```
+
+A small readability utility that returns `true` when `condition` is strictly `false`. Used throughout the Spinney source as a readable alternative to the `!` operator — for example, `if (Not(index === -1))` reads as "if the index was found".
+
+<Note>
+  `ParseText`, `ParseXML`, `StringWritable`, and `Not` are internal implementation details. They are not exported from `lib/index.js` and should not be imported directly in application code. Their interfaces may change between minor versions without a semver-breaking change.
+</Note>

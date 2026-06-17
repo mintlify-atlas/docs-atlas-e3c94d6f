@@ -1,0 +1,82 @@
+---
+title: "Configure Spinney with Options and Axios Settings"
+sidebarTitle: "Configuration"
+description: "Learn how to configure Spinney's scraping behavior with the Options object and pass custom Axios request configuration for headers, timeouts, and proxies."
+---
+
+The `Spinney` constructor accepts up to three arguments: the target URL string, an optional `Options` object that controls scraping behavior, and an optional `AxiosRequestConfig` object that is passed directly to `axios.create()`. The Axios config is merged with `{ responseType: 'stream' }` — that single field is always forced by Spinney and cannot be overridden — but everything else, including headers, authentication, timeouts, and proxies, can be configured freely.
+
+## The `Options` type
+
+The `Options` type is defined as `{ overide?: boolean; debug?: boolean }`. Both fields are optional and default to `false`.
+
+<ParamField path="overide" type="boolean" default="false">
+  Skip robots.txt Disallow rule enforcement. When `true`, `_isForbidden()` returns `true` immediately for every URL, meaning all paths on the origin domain are eligible for crawling regardless of what robots.txt says. See [robots.txt](/guides/robots-txt#the-overide-option) for details.
+</ParamField>
+
+<ParamField path="debug" type="boolean" default="false">
+  When `true`, errors are logged to stderr via `console.error(error?.message)`. When `false` (the default), the internal error handler is a noop and errors are silently swallowed in catch blocks before being forwarded to the subscriber. Enabling `debug` is useful during development for diagnosing network failures and parse errors without adding custom error handlers everywhere.
+</ParamField>
+
+```typescript
+const spinney = new Spinney('https://example.com/', {
+  overide: false, // respect robots.txt (default)
+  debug: true,    // log errors to stderr
+});
+```
+
+## Axios configuration
+
+The third constructor argument is any valid `AxiosRequestConfig`. Spinney calls `axios.create(Object.assign({ responseType: 'stream' }, config ?? {}))`, so your config values are applied on top of the stream default. The resulting `axiosInstance` is used for every request Spinney makes — robots.txt, sitemaps, and all HTML pages.
+
+```typescript
+const spinney = new Spinney(
+  'https://example.com/',
+  { debug: true },
+  {
+    timeout: 10000, // 10 second initial timeout
+    headers: {
+      'User-Agent': 'MyBot/1.0',
+      'Accept-Language': 'en-US',
+    },
+  }
+);
+```
+
+Any property accepted by `AxiosRequestConfig` is valid here — `auth`, `proxy`, `httpsAgent`, `maxRedirects`, and so on. Consult the [Axios documentation](https://axios-http.com/docs/req_config) for the full list.
+
+<Tip>
+Always set a `timeout` in your Axios config. Without one, Spinney will wait indefinitely for unresponsive servers, which can stall the entire crawl. A value between 5000 and 30000 milliseconds is a reasonable starting point for most sites.
+</Tip>
+
+## Automatic retry behavior
+
+`httpXMLOrDocument()` includes built-in retry logic for transient HTTP errors. The behavior depends on the response status code:
+
+- **HTTP 404** — resolved immediately with no data; the URL is silently skipped with no retries.
+- **Any other HTTP error** (5xx, 429, connection reset, etc.) — the request is retried. On each retry attempt the timeout is increased by `(retries * 1000) / 4` milliseconds:
+
+```typescript
+retries++;
+this.axiosInstance.defaults.timeout = (retries * 1000) / 4;
+return await retry();
+```
+
+- **`MAX_RETRIES` (5) exhausted** — throws `Error('retries reached maximum' + retries)`, which is caught by the outer try/catch, forwarded to `subscriber.error()`, and `pause()` is called to stop the crawl.
+
+<Note>
+Once the retry limit is reached the error is emitted to your subscriber's `error` handler and the crawl stops. See [Error Handling](/guides/error-handling) for how to handle that case and restart the crawl if needed.
+</Note>
+
+## Batched concurrency
+
+`_setUp()` processes URLs in batches of four using `Promise.all(promises.splice(0, 4))`:
+
+```typescript
+while (promises.length) {
+  const sitesBatch = await Promise.all(promises.splice(0, 4));
+  await this._setUp(sitesBatch.flat(1));
+}
+```
+
+Each batch of four URLs is fetched and parsed concurrently. When all four complete, the newly discovered URLs from those pages are collected, flattened, and passed back into `_setUp()` as the next batch. This keeps peak concurrency bounded at four in-flight requests without serializing the crawl into a single queue. There is currently no configuration option to change the batch size.

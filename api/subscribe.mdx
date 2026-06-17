@@ -1,0 +1,105 @@
+---
+title: "spinney.subscribe() — Crawl Event Callbacks"
+sidebarTitle: "subscribe()"
+description: "Reference for spinney.subscribe(). Pass next, error, complete, and htmlparser2 callbacks to receive crawl events. Returns an RxJS Subscription."
+---
+
+`subscribe()` is an override of the RxJS `Observable.subscribe()` method. It separates the standard RxJS observer callbacks (`next`, `error`, `complete`) from htmlparser2-specific parser callbacks (`onattribute`, `ontext`, and any other supported htmlparser2 handler). The RxJS callbacks are forwarded to `super.subscribe()` to wire up the Observable pipeline, while the htmlparser2 callbacks are destructured from the options object and stored in `this.cbs`. During each HTML page fetch, the stored callbacks are attached to the internal `WritableStream` handler so they fire as the HTML is streamed and parsed.
+
+## Signature
+
+```typescript
+spinney.subscribe(options: SubscribeOptions): Subscription
+```
+
+## Callback parameters
+
+<ParamField path="next" type="(site: string) => void">
+  Called with the absolute URL string of each successfully crawled page. Fired once per page, after the page's HTML has been fully streamed and parsed.
+</ParamField>
+
+<ParamField path="error" type="(error: Error) => void">
+  Called with an `Error` object when a fatal error occurs — for example, when the retry count for a failing request reaches `MAX_RETRIES` (5). After `error` is called, the Observable enters a terminal state and no further `next` or `complete` events will fire.
+</ParamField>
+
+<ParamField path="complete" type="() => void">
+  Called once when the entire crawl queue has been exhausted and there are no more approved URLs left to visit. Not called if the crawl ends due to an error.
+</ParamField>
+
+<ParamField path="onattribute" type="(name: string, value: string, quote?: string) => void">
+  htmlparser2 callback fired for every HTML attribute encountered on every element as the page is streamed. This fires for all attributes — `id`, `class`, `src`, `href`, data attributes, and so on — not just `href`. Spinney's internal `href` collection runs alongside this callback in the same handler, so you receive all attribute events without interfering with the URL queue.
+</ParamField>
+
+<ParamField path="ontext" type="(text: string) => void">
+  htmlparser2 callback fired with the text content of each HTML text node encountered during streaming. Useful for collecting visible page text without a separate DOM parse step.
+</ParamField>
+
+<ParamField path="...handlers" type="htmlparser2 handler keys">
+  Any other valid htmlparser2 handler keys (e.g. `onopentag`, `onclosetag`, `onprocessinginstruction`, `oncomment`) are also accepted and forwarded directly to the parser's `WritableStream` handler.
+</ParamField>
+
+## Return value
+
+`subscribe()` returns an RxJS `Subscription`. Call `.unsubscribe()` on it at any time to stop receiving events and trigger the Observable's teardown logic, which calls `pause()` to halt the batch loop.
+
+## Example — collect all links
+
+```typescript
+const links: string[] = [];
+
+const subscription = spinney.subscribe({
+  next(url) {
+    console.log('Crawled:', url);
+  },
+  onattribute(name, value) {
+    if (name === 'href') {
+      links.push(value);
+    }
+  },
+  complete() {
+    console.log(`Done. Found ${links.length} links.`);
+  },
+  error(err) {
+    console.error('Failed:', err.message);
+  },
+});
+```
+
+## Example — stop after N pages
+
+```typescript
+let count = 0;
+
+const subscription = spinney.subscribe({
+  next(url) {
+    count++;
+    console.log(`[${count}] ${url}`);
+    if (count >= 10) {
+      subscription.unsubscribe();
+    }
+  },
+});
+```
+
+<Note>
+  `onattribute` is called for **every** attribute on every HTML element (`id`, `class`, `src`, `href`, `data-*`, etc.), not just `href`. Spinney captures `href` values internally for URL queuing in parallel with your callback — you do not need to push URLs into any queue manually. Your `onattribute` handler is purely observational.
+</Note>
+
+<Tip>
+  Because `Spinney` extends `Observable`, you can pipe it through RxJS operators before subscribing for a more functional style. For example:
+
+  ```typescript
+  import { take, filter } from 'rxjs/operators';
+
+  spinney
+    .pipe(
+      filter((url: string) => url.includes('/blog/')),
+      take(20)
+    )
+    .subscribe({
+      next(url) {
+        console.log('Blog page:', url);
+      },
+    });
+  ```
+</Tip>

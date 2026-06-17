@@ -1,20 +1,88 @@
 ---
-title: "Introduction"
-description: "Welcome to your project"
+title: "Spinney: Observable Web Scraper for Node.js"
+sidebarTitle: "Home"
+description: "Spinney is an efficient, flexible web scraper built on RxJS Observables. Crawl entire sites, respect robots.txt rules, and stream discovered URLs in real time."
 ---
 
-Write a short description of your product here. What it does, who it's for, and what they can accomplish with it.
+Spinney is a TypeScript-first web scraping library that turns a single URL into a live stream of crawled pages. Built on top of RxJS, it models each scrape as an Observable — you subscribe, receive discovered URLs and parsed content as events, then unsubscribe when done. Spinney automatically reads and respects `robots.txt` rules, follows XML sitemaps, deduplicates visited links, and retries failed requests with exponential backoff.
 
-<Tip>
-  Ready to make this your own? Start by editing this page. Update your `docs.json` file to customize your site. Then fill out the [Quickstart](/quickstart) page.
-</Tip>
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Add Spinney to your project with npm, yarn, or pnpm in seconds.
+  </Card>
+  <Card title="Quickstart" icon="bolt" href="/quickstart">
+    Build your first scraper and start streaming crawled URLs in under 5 minutes.
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/spinney-class">
+    Full reference for the Spinney class, constructor options, and all public methods.
+  </Card>
+  <Card title="Guides" icon="book-open" href="/guides/robots-txt">
+    Learn how Spinney handles robots.txt, sitemaps, error handling, and configuration.
+  </Card>
+</CardGroup>
 
-<Card title="Quickstart" icon="rocket" href="/quickstart">
-  This card links to the quickstart page in your project.
-</Card>
-<Card title="Components" icon="puzzle-piece" href="https://mintlify.com/docs/components">
-  Add cards, callouts, steps, tabs, and more to design and structure your pages.
-</Card>
-<Card title="Settings" icon="gear" href="https://mintlify.com/docs/organize/settings">
-  Set your site name, branding, and navigation in the `docs.json` file.
-</Card>
+## Why Spinney?
+
+Spinney removes boilerplate from web crawling by giving you a reactive, event-driven interface instead of a callback soup. Feed it a URL and subscribe to its output — every crawled page emits a `next` event, parse events fire per element, and `complete` fires when the entire site graph is exhausted.
+
+<CardGroup cols={3}>
+  <Card title="Observable API" icon="wave-sine">
+    Powered by RxJS. Compose, filter, and transform crawl streams with standard operators.
+  </Card>
+  <Card title="robots.txt Aware" icon="shield-check">
+    Automatically fetches and enforces Disallow rules before crawling begins.
+  </Card>
+  <Card title="Sitemap Support" icon="sitemap">
+    Detects XML sitemaps and uses them as the crawl seed list when available.
+  </Card>
+  <Card title="Auto Retry" icon="rotate-right">
+    Failed requests retry up to 5 times with incrementally increasing timeouts.
+  </Card>
+  <Card title="Deduplication" icon="filter">
+    Tracks every visited URL in a Set — no page is fetched or emitted twice.
+  </Card>
+  <Card title="TypeScript First" icon="brackets-curly">
+    Full type definitions ship with the package. No `@types` package needed.
+  </Card>
+</CardGroup>
+
+## Quick Look
+
+```typescript quickstart.ts
+import Spinney from 'spinney';
+
+const scraper = new Spinney('https://example.com/');
+
+const subscription = scraper.subscribe({
+  next(url) {
+    console.log('Crawled:', url);
+  },
+  onattribute(name, value) {
+    if (name === 'href') console.log('Found link:', value);
+  },
+  error(err) {
+    console.error('Scrape error:', err);
+  },
+  complete() {
+    console.log('Crawl complete');
+  },
+});
+
+// Stop at any time
+subscription.unsubscribe();
+```
+
+<Steps>
+  <Step title="Install the package">
+    Add Spinney to your project using your preferred package manager.
+  </Step>
+  <Step title="Create a Spinney instance">
+    Pass your target URL to `new Spinney()`. Optionally provide `Options` and Axios config.
+  </Step>
+  <Step title="Subscribe to events">
+    Call `.subscribe()` with `next`, `error`, `complete`, and HTML parser callbacks.
+  </Step>
+  <Step title="Unsubscribe when done">
+    Hold the returned `Subscription` and call `.unsubscribe()` to stop crawling at any time.
+  </Step>
+</Steps>

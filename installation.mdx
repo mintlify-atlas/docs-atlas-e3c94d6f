@@ -1,0 +1,84 @@
+---
+title: "Install Spinney in Your Node.js Project"
+sidebarTitle: "Installation"
+description: "Add Spinney to any Node.js or TypeScript project using npm, yarn, or pnpm. Requires Node.js 14+ and ships with full TypeScript type definitions."
+---
+
+Spinney ships as a **CommonJS** package (`"type": "commonjs"`) with its compiled entry point at `lib/index.js` and bundled type declarations at `lib/index.d.ts`. This means you can `require` or `import` it in any Node.js project without extra build configuration — no additional transpilation step is needed. Node.js 14 or later is recommended because Spinney relies on the built-in `URL` constructor and Promise-based streaming APIs. A stable internet connection is required at runtime, since every crawl makes live HTTP requests to the target site.
+
+<Note>
+  Spinney uses `require()` / CommonJS by default. If you are working in a pure ESM environment (e.g. a project with `"type": "module"` in its `package.json`) you may need a dynamic `import()` call or a thin CommonJS wrapper module to load Spinney correctly.
+</Note>
+
+## Install the package
+
+<CodeGroup>
+
+```bash npm
+npm install spinney
+```
+
+```bash yarn
+yarn add spinney
+```
+
+```bash pnpm
+pnpm add spinney
+```
+
+</CodeGroup>
+
+## Dependencies
+
+Spinney installs four runtime dependencies automatically. You do not need to install them separately.
+
+| Package | Version | Purpose |
+|---|---|---|
+| **axios** | `^0.26.1` | Makes all HTTP GET requests with streaming response support (`responseType: 'stream'`). Also provides the `AxiosRequestConfig` type used by the Spinney constructor's optional third parameter. |
+| **htmlparser2** | `^7.2.0` | Parses HTML pages via its `WritableStream` API. The streaming design keeps memory usage low even on large pages. The `onattribute` and `ontext` callbacks you pass to `subscribe()` are forwarded directly into htmlparser2's handler object. |
+| **rxjs** | `^7.5.5` | Provides the `Observable` base class that Spinney extends, as well as the `Subscription` type returned by `spinney.subscribe()`. |
+| **xml2js** | `^0.4.23` | Parses XML sitemaps discovered via `robots.txt` into arrays of URLs that are fed into the crawl queue. |
+
+## TypeScript setup
+
+TypeScript definitions are bundled inside the `spinney` package itself (the `types` field in `package.json` points to `lib/index.d.ts`). You do **not** need to install a separate `@types/spinney` package.
+
+A minimal `tsconfig.json` that works well with Spinney:
+
+```json tsconfig.json
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "strict": true,
+    "outDir": "dist",
+    "esModuleInterop": true
+  }
+}
+```
+
+Importing Spinney in your code:
+
+```typescript
+// ES module import (TypeScript / bundler)
+import Spinney from 'spinney';
+
+// CommonJS require
+const Spinney = require('spinney');
+```
+
+## Verify installation
+
+After installing, run the following script to confirm Spinney loads and constructs correctly. It creates a Spinney instance but does **not** start crawling — no network calls are made until you call `.subscribe()`.
+
+```javascript verify.js
+const Spinney = require('spinney');
+
+const spinney = new Spinney('https://example.com/');
+
+console.log('Spinney instance created:', spinney instanceof require('rxjs').Observable);
+// Expected output: Spinney instance created: true
+```
+
+If the script runs without errors and prints `true`, Spinney is installed and working correctly.

@@ -1,0 +1,105 @@
+---
+title: "Handle Errors and Control Crawl Flow in Spinney"
+sidebarTitle: "Error Handling"
+description: "Learn how Spinney surfaces errors through the RxJS subscriber, how the debug option enables logging, and how to pause and resume a crawl programmatically."
+---
+
+Spinney propagates errors through the standard RxJS Observable contract. Any unhandled error during the crawl — a network failure, a parse error, or retry exhaustion — is forwarded to the `error` callback in your `subscribe()` call. On top of that, Spinney exposes a `debug` option for lightweight stderr logging and `pause()` / `resume()` methods that give you direct control over the batch processing loop.
+
+## Error callback
+
+When a fatal error occurs inside `_setUp()` or `httpXMLOrDocument()`, Spinney calls `this.subscriber.error(error)`. This delivers the error to the `error` handler you passed to `subscribe()` and terminates the Observable stream. Once a subscriber receives an error, the stream is in a terminal state and will not emit further `next` or `complete` events.
+
+```typescript
+const subscription = spinney.subscribe({
+  next(url) {
+    console.log('Crawled:', url);
+  },
+  error(err) {
+    console.error('Crawl error:', err.message);
+    // The crawl has stopped — re-create and re-subscribe to retry
+  },
+  complete() {
+    console.log('Crawl finished');
+  },
+});
+```
+
+## Debug mode
+
+By default, Spinney uses a noop function as its internal error logger. Passing `options.debug = true` to the constructor replaces the noop with `console.error(error?.message)`, which writes every caught error message to stderr. This happens inside catch blocks before the error is re-thrown or passed to `subscriber.error()`, so it does not interfere with your subscriber's error handler — it only adds a side-effect log line.
+
+```typescript
+const spinney = new Spinney('https://example.com/', { debug: true });
+
+spinney.subscribe({
+  next(url) { console.log('Visited:', url); },
+  error(err) { /* also called on fatal errors */ },
+  complete() { console.log('Done'); },
+});
+```
+
+Debug mode is most useful during development when you want to see all transient errors — including those that are caught and retried — without setting up a full error-handling pipeline.
+
+## HTTP error handling
+
+Spinney distinguishes between HTTP error types and applies different strategies to each:
+
+| Scenario | Behavior |
+|---|---|
+| **HTTP 404** | `Promise.resolve()` is returned immediately. The URL is skipped silently with no retry and no error emitted. |
+| **Other HTTP errors** (5xx, 429, etc.) | The request is retried up to `MAX_RETRIES` (5) times. The Axios instance timeout grows by `(retries * 1000) / 4` ms on each attempt. |
+| **Max retries reached** | Throws `Error('retries reached maximum' + retries)`. Caught by the outer try/catch, forwarded to `subscriber.error()`, and `pause()` is called. |
+| **robots.txt fetch failure** | Caught in `setUp()`, `debug?.()` is called, and `subscriber.error(error)` is invoked. |
+| **Non-HTTP errors** (DNS failure, connection refused, etc.) | Re-thrown immediately without retrying, caught by the outer handler, and forwarded to `subscriber.error()`. |
+
+## Pause and resume
+
+`spinney.pause()` sets `isProcessing = false`. The internal batch loop in `_setUp()` checks this flag at the top of each iteration:
+
+```typescript
+if (this.isProcessing) {
+  // ... process the batch
+}
+```
+
+When `isProcessing` is `false` the loop body is skipped, so no new HTTP requests are issued. `spinney.resume()` sets `isProcessing = true`, allowing the loop to continue on the next iteration.
+
+```typescript
+// Pause crawling temporarily
+spinney.pause();
+
+// ... do something synchronous or async ...
+
+// Resume crawling
+spinney.resume();
+```
+
+`pause()` is called automatically in three situations: when `subscriber.complete()` is called (the crawl finished naturally), when `subscriber.error()` is called after retry exhaustion, and in the Observable's teardown function returned by `setUp()` (triggered by `unsubscribe()`).
+
+<Warning>
+After an error is emitted, the RxJS Observable is in a terminal state. Calling `resume()` alone will not restart the crawl — the subscriber will not receive any further events. To retry after a fatal error, create a new `Spinney` instance with the same configuration and call `subscribe()` again.
+</Warning>
+
+## Unsubscribing
+
+`subscribe()` returns an RxJS `Subscription`. Calling `subscription.unsubscribe()` disconnects your observer from the Observable stream and triggers the teardown function returned by `setUp()`, which calls `pause()` to stop the batch loop.
+
+```typescript
+const subscription = spinney.subscribe({
+  next(url) {
+    if (url.includes('/target-page')) {
+      console.log('Found target:', url);
+      subscription.unsubscribe(); // stop crawling
+    }
+  },
+  error(err) {
+    console.error('Crawl error:', err.message);
+  },
+  complete() {
+    console.log('Crawl complete');
+  },
+});
+```
+
+Unsubscribing is the right tool whenever you want to stop the crawl based on a condition rather than an error — for example, after finding a specific URL, after collecting a target number of pages, or after a wall-clock time limit has elapsed.

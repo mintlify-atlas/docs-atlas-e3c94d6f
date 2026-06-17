@@ -1,47 +1,166 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "Get Started with Spinney in 5 Minutes"
+sidebarTitle: "Quickstart"
+description: "Learn how to create a Spinney scraper, subscribe to crawl events, and collect href attributes from a target website in under 5 minutes."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
-
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
-
-## Prerequisites
-
-Before you begin, you must have:
-
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
-
-## Get started
+This guide walks you through building a working web scraper that streams every crawled URL to your console and collects all `href` attribute values found across a target site. By the end you will have a complete, runnable TypeScript file that you can point at any website and start collecting data immediately.
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
+
+  <Step title="Install Spinney">
+
+    Add Spinney to your project with a single command:
 
     ```bash
-    npm install your-package
+    yarn add spinney
     ```
-  </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
 
-    ```bash
-    your-cli init
-    ```
-  </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
+    Spinney pulls in its four runtime dependencies — axios, htmlparser2, rxjs, and xml2js — automatically.
 
-    ```bash
-    your-cli start
-    ```
   </Step>
+
+  <Step title="Import and instantiate">
+
+    Create a new file (e.g. `scraper.ts`) and import the `Spinney` class. Instantiate it with the URL of the site you want to crawl. No network activity happens yet — the crawl only begins when you call `.subscribe()`.
+
+    ```typescript scraper.ts
+    import Spinney from 'spinney';
+
+    const spinney = new Spinney('https://example.com/');
+    ```
+
+    The constructor signature is:
+
+    ```typescript
+    new Spinney(site: string, options?: Options, config?: AxiosRequestConfig)
+    ```
+
+    - **`site`** — the target URL to crawl (must be a valid absolute URL).
+    - **`options`** — optional `{ debug?: boolean; overide?: boolean }` object.
+    - **`config`** — optional Axios request config forwarded to the internal Axios instance.
+
+  </Step>
+
+  <Step title="Subscribe to events">
+
+    Call `.subscribe()` to start the crawl. Pass an object containing any combination of the handlers below. The crawl begins immediately on subscribe.
+
+    ```typescript scraper.ts
+    const subscription = spinney.subscribe({
+      next(site) {
+        console.log('Crawled:', site);
+      },
+      ontext(text) {
+        console.log('Text:', text);
+      },
+      onattribute(name, value, quote) {
+        console.log('Attribute:', name, value, quote);
+      },
+      error(error) {
+        console.error('Error:', error);
+      },
+      complete() {
+        console.log('Done');
+      },
+    });
+    ```
+
+    | Handler | When it fires | Arguments |
+    |---|---|---|
+    | `next(site)` | After each page is fully fetched and parsed | The crawled URL string |
+    | `onattribute(name, value, quote)` | For every HTML attribute on every element of every page | Attribute name, value, and optional quote character |
+    | `ontext(text)` | For every text node encountered during HTML parsing | The raw text string |
+    | `error(error)` | On any unrecoverable crawl error | The `Error` object |
+    | `complete()` | When the crawl queue is exhausted | — |
+
+    <Note>
+      The `onattribute` and `ontext` handlers are htmlparser2 handler callbacks and are called synchronously as the HTML stream is parsed. The `next`, `error`, and `complete` handlers follow standard RxJS Observable semantics.
+    </Note>
+
+  </Step>
+
+  <Step title="Unsubscribe">
+
+    Call `subscription.unsubscribe()` to stop the crawl early. This is the standard RxJS pattern for cancelling a subscription.
+
+    ```typescript
+    subscription.unsubscribe();
+    ```
+
+    Call `unsubscribe()` when:
+    - You have collected the data you need before the crawl finishes naturally.
+    - You want to implement a timeout (e.g. stop after 30 seconds regardless of queue depth).
+    - Your process is shutting down and you want a clean teardown.
+
+    If you do not call `unsubscribe()` manually, the Observable cleans up automatically when `complete()` or `error()` fires.
+
+  </Step>
+
 </Steps>
 
-<Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
+## Full example
 
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
+The following self-contained TypeScript file collects every crawled URL into an array, tracks all `href` attribute values seen during parsing, and logs a summary on completion. Copy it, update the URL, and run it with `ts-node scraper.ts`.
+
+```typescript scraper.ts
+import Spinney from 'spinney';
+
+const TARGET = 'https://example.com/';
+
+const crawledPages: string[] = [];
+const collectedHrefs: string[] = [];
+
+const spinney = new Spinney(TARGET, { debug: true });
+
+const subscription = spinney.subscribe({
+  next(site: string) {
+    crawledPages.push(site);
+    console.log(`[${crawledPages.length}] Crawled: ${site}`);
+  },
+
+  onattribute(name: string, value: string) {
+    if (name === 'href' && value) {
+      collectedHrefs.push(value);
+    }
+  },
+
+  error(error: Error) {
+    console.error('Crawl error:', error.message);
+  },
+
+  complete() {
+    console.log('---');
+    console.log(`Crawl complete. Pages visited : ${crawledPages.length}`);
+    console.log(`Unique href values collected  : ${collectedHrefs.length}`);
+  },
+});
+
+// Optional: stop after 60 seconds
+setTimeout(() => {
+  console.log('Timeout reached — unsubscribing.');
+  subscription.unsubscribe();
+}, 60_000);
+```
+
+## What happens under the hood
+
+When you call `subscribe()`, Spinney immediately fetches `/robots.txt` from the target origin and parses its `Disallow` directives into an internal forbidden `Set`. If a `Sitemap:` entry is present in `robots.txt`, that sitemap URL becomes the first item in the crawl queue; otherwise the bare origin (e.g. `https://example.com`) is used as the seed. Pages are then fetched in batches of four concurrent requests using `Promise.all`. For each HTML response, htmlparser2 streams the body and collects every `href` attribute value. Those values are resolved to absolute URLs, validated, checked against the forbidden set, and deduplicated against a `seen` set — only new, permitted URLs enter the next batch. `subscriber.next(url)` fires as soon as a page finishes parsing, so your `next` handler receives results progressively rather than all at once at the end.
+
+<Tip>
+  Pass `{ debug: true }` as the second constructor argument to have Spinney log error messages to `stderr` via `console.error` during development. This is controlled by the `options.debug` flag and uses a no-op function in production when omitted, so there is zero overhead in deployed code.
+
+  ```typescript
+  const spinney = new Spinney('https://example.com/', { debug: true });
+  ```
 </Tip>
+
+<Note>
+  Spinney respects `robots.txt` Disallow rules by default. If you need to crawl paths that are disallowed (for example when scraping your own site in a test environment), pass `{ overide: true }` — note the spelling matches the source exactly — as the second constructor argument. With `overide: true`, the `_isForbidden` check always returns `true` (allowed) regardless of the forbidden set.
+
+  ```typescript
+  const spinney = new Spinney('https://example.com/', { overide: true });
+  ```
+</Note>
+
+For a full reference of every constructor parameter, method, and option see the [Spinney class API](/api/spinney-class).

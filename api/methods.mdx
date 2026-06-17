@@ -1,0 +1,195 @@
+---
+title: "Spinney Public Methods Reference"
+sidebarTitle: "Methods"
+description: "Complete reference for all public methods on the Spinney class: pause, resume, getURL, isMatch, isApproved, getApproved, and toArray."
+---
+
+Beyond `subscribe()`, the `Spinney` class exposes several public utility methods. Some — `getURL`, `isApproved`, `getApproved`, and `isMatch` — are used internally during the crawl but are part of the public interface and can be called directly for testing, custom filtering logic, or introspection. Others — `pause` and `resume` — directly control the crawl's state machine by toggling the `isProcessing` flag that gates the internal batch loop.
+
+---
+
+## `pause()`
+
+```typescript
+spinney.pause(): void
+```
+
+Sets `isProcessing` to `false`, which prevents the internal `_setUp` batch loop from scheduling any further URL processing. Called automatically when the crawl completes (`subscriber.complete()` has been called) or when a fatal error causes the Observable to terminate. You can also call it manually to temporarily halt crawling.
+
+```typescript
+// Pause the scraper temporarily
+spinney.pause();
+```
+
+---
+
+## `resume()`
+
+```typescript
+spinney.resume(): void
+```
+
+Sets `isProcessing` to `true`, allowing the batch loop to begin or continue processing URL batches. This is called automatically by `setUp()` immediately after the robots.txt response is received and parsed. Calling `resume()` after a fatal error will set the flag but will not restart a terminated Observable — you must construct a new `Spinney` instance to begin a fresh crawl.
+
+---
+
+## `getURL()`
+
+```typescript
+spinney.getURL(pathname: string): string
+```
+
+Resolves a path or URL string to an absolute URL relative to the scraper's base site. The resolution rules are:
+
+- If `pathname` starts with `//` (protocol-relative), the leading `/` is stripped and the result is combined with the base site's origin using `new URL(site)`.
+- If `pathname` starts with `/` (root-relative), it is combined with the base site's origin using `new URL(site)`.
+- If `pathname` is any other string (already an absolute URL, a relative path without a leading slash, etc.), it is returned unchanged.
+
+### Parameters
+
+<ParamField path="pathname" type="string" required>
+  A relative path (e.g. `/about`), protocol-relative URL (e.g. `//cdn.example.com/file`), or absolute URL (e.g. `https://other.com`).
+</ParamField>
+
+### Returns
+
+`string` — a fully qualified URL string.
+
+### Throws
+
+Throws a `TypeError` with the message `'pathname is not type string'` if `pathname` is not a string.
+
+### Examples
+
+```typescript
+const spinney = new Spinney('https://www.example.com/');
+
+spinney.getURL('/path');              // => 'https://www.example.com/path'
+spinney.getURL('https://other.com'); // => 'https://other.com'
+```
+
+---
+
+## `isMatch()`
+
+```typescript
+spinney.isMatch(testPathname: string, basePathname: string): boolean
+```
+
+Tests whether `basePathname` (a full URL string) matches the pattern defined by `testPathname` (a disallow path entry from robots.txt). Uses `RegExps.ForwardSlashWord` to verify that `testPathname` contains a path segment, then constructs a dynamic `RegExp` via `RegExps.getHostnameAndPathname(hostname, pathname)` that anchors the match to the scraper's hostname.
+
+### Parameters
+
+<ParamField path="testPathname" type="string" required>
+  A robots.txt-style disallow path, such as `/private` or `/*/collections/name`. Wildcard segments (`*`) in the path are treated as literal characters in the generated RegExp — they match `*` in the URL, not arbitrary path segments. Patterns are taken directly from the robots.txt `Disallow:` lines.
+</ParamField>
+
+<ParamField path="basePathname" type="string" required>
+  A full absolute URL to test against the pattern, e.g. `'https://www.example.com/dontdoit/collections/name'`.
+</ParamField>
+
+### Returns
+
+`boolean` — `true` if `basePathname` matches the pattern built from `testPathname` and the scraper's hostname.
+
+### Examples
+
+```typescript
+const spinney = new Spinney('https://www.example.com/');
+
+spinney.isMatch(
+  '/*/collections/name',
+  'https://www.example.com/dontdoit/collections/name'
+); // => true
+
+spinney.isMatch(
+  '/*/collections/name',
+  'https://www.example.com/dontdoit/collections'
+); // => false
+```
+
+---
+
+## `isApproved()`
+
+```typescript
+spinney.isApproved(site: string): boolean
+```
+
+Returns `true` if `site` passes all three approval checks:
+
+1. It is a syntactically valid URL (tested against `RegExps.getURL()`).
+2. Its `hostname` or `origin` starts with the base site's `hostname` or `origin` — i.e. it belongs to the same domain.
+3. It has not been visited before (not in `seen`) and is not forbidden by any robots.txt `Disallow` rule (checked via `isForbidden()`). As a side effect, an approved URL is immediately added to the `seen` Set to prevent re-queuing.
+
+Used internally to filter candidate URLs before adding them to the crawl batch queue.
+
+### Parameters
+
+<ParamField path="site" type="string" required>
+  An absolute URL string to evaluate, e.g. `'https://www.example.com/about'`.
+</ParamField>
+
+### Returns
+
+`boolean` — `true` if the URL is valid, on the same domain, unseen, and not forbidden.
+
+---
+
+## `getApproved()`
+
+```typescript
+spinney.getApproved(hrefs: string[]): string[]
+```
+
+Accepts an array of raw `href` attribute values collected from a single HTML page, runs each one through `getURL()` to resolve relative paths to absolute URLs, then filters the results through `isApproved()`. The returned array contains only the URLs that are valid, same-domain, unseen, and not robots.txt-forbidden. This is the primary mechanism by which Spinney builds the next batch of URLs to crawl.
+
+### Parameters
+
+<ParamField path="hrefs" type="string[]" required>
+  Raw `href` attribute values collected from an HTML page, e.g. `['/about', 'https://example.com/blog', '#anchor', 'https://external.com']`.
+</ParamField>
+
+### Returns
+
+`string[]` — filtered array of approved, fully-qualified absolute URLs ready to be added to the crawl queue.
+
+---
+
+## `toArray()`
+
+```typescript
+spinney.toArray(data: any): any[]
+```
+
+Returns `data` wrapped in an array. If `data` is already an array it is returned as-is; otherwise it is wrapped in `[data]`. Used internally to normalise values before array operations.
+
+### Parameters
+
+<ParamField path="data" type="any" required>
+  Any value. Arrays are passed through; all other values are wrapped.
+</ParamField>
+
+### Returns
+
+`any[]`
+
+---
+
+## `isArrayEmpty()`
+
+```typescript
+spinney.isArrayEmpty(data: any): boolean
+```
+
+Returns `true` if `data` is not an array, or if it is an array with a length of `0`. Used internally as the base case for the recursive `_setUp` batch loop — when the pending sites array is empty, the crawl completes and `subscriber.complete()` is called.
+
+### Parameters
+
+<ParamField path="data" type="any" required>
+  The value to check. Typically the current batch of pending URLs.
+</ParamField>
+
+### Returns
+
+`boolean` — `true` if `data` is not an array or is an empty array.

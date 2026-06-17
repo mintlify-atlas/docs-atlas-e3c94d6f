@@ -1,0 +1,78 @@
+---
+title: "Spinney: Observable Web Scraper for Node.js"
+sidebarTitle: "Introduction"
+description: "Spinney is a flexible, efficient Node.js web scraper powered by RxJS Observables. Stream crawled pages, respect robots.txt, and traverse XML sitemaps automatically."
+---
+
+Spinney is a Node.js web scraping library that models the entire crawl process as an RxJS Observable stream. Instead of collecting all results upfront, Spinney emits each successfully crawled URL as a `next` event the moment it is processed — letting your code react in real time. It automatically fetches and parses a target site's `robots.txt` file to respect Disallow rules, discovers seed URLs from XML sitemaps when available, deduplicates visited pages, and retries failed requests with back-off. Because Spinney is written in TypeScript and ships its own type definitions, it slots naturally into both TypeScript and plain JavaScript projects.
+
+## What is Spinney?
+
+Spinney is published to npm as `spinney` (version **1.0.2**) under the MIT licence. Its central design decision is to extend RxJS `Observable<any>` directly — the class declaration is `export default class Spinney extends Observable<any>`. This means every Spinney instance *is* an Observable, and all standard RxJS operators and subscription semantics apply without any adaptor layer.
+
+When you call `spinney.subscribe(...)`, the library begins crawling and calls `subscriber.next(url)` for every page that is successfully fetched and parsed. When the crawl queue is exhausted it calls `subscriber.complete()`. If an unrecoverable error occurs it calls `subscriber.error(error)`.
+
+Under the hood Spinney relies on three runtime libraries:
+
+| Library | Version | Role |
+|---|---|---|
+| **axios** | `^0.26.1` | Makes all HTTP GET requests; responses are streamed |
+| **htmlparser2** | `^7.2.0` | Parses HTML pages via its streaming `WritableStream` API |
+| **xml2js** | `^0.4.23` | Parses XML sitemaps into arrays of URLs |
+| **rxjs** | `^7.5.5` | Provides the `Observable` base class and `Subscription` type |
+
+## Core concepts
+
+Spinney is built around six interlocking ideas that together make crawling reliable and respectful.
+
+<CardGroup cols={2}>
+  <Card title="Observable Stream" icon="wave-sine">
+    Spinney extends RxJS `Observable<any>` and pushes each crawled URL through `subscriber.next()`. You can compose it with any RxJS operators or simply subscribe with plain callbacks.
+  </Card>
+  <Card title="robots.txt Enforcement" icon="shield-halved">
+    On every crawl Spinney fetches `/robots.txt` first and stores all `Disallow` paths in an internal `Set<string>`. URLs that match a Disallow rule are silently skipped unless you pass `overide: true`.
+  </Card>
+  <Card title="Sitemap Traversal" icon="sitemap">
+    When the `robots.txt` response contains a `Sitemap:` directive, Spinney uses that sitemap URL as the initial seed instead of the bare origin. XML sitemap entries are parsed with xml2js and fed directly into the crawl queue.
+  </Card>
+  <Card title="Automatic Retry" icon="rotate">
+    Each page fetch is wrapped in a retry loop with a maximum of **5 attempts** (`MAX_RETRIES = 5`). On a non-404 HTTP error the timeout is increased by `(retries × 1000) / 4` milliseconds per attempt. 404 responses resolve immediately without retrying.
+  </Card>
+  <Card title="URL Deduplication" icon="filter">
+    Every URL that passes the robots.txt check is recorded in an internal `seen` `Set<string>`. Any URL already present in that set is dropped, so each page is crawled at most once per subscription.
+  </Card>
+  <Card title="Batched Fetching" icon="layer-group">
+    The crawl queue is processed in batches of **4** concurrent requests using `Promise.all(promises.splice(0, 4))`. This keeps memory usage bounded while saturating network I/O.
+  </Card>
+</CardGroup>
+
+## How it works
+
+Here is the full crawl lifecycle in order, from construction to completion.
+
+1. **Constructor** — `new Spinney(site, options?, config?)` stores the target URL, creates a `new URL(site)` for origin parsing, initialises the empty `forbidden` and `seen` sets, and creates an Axios instance with `responseType: 'stream'`. The Observable's subscriber function is registered but not yet executed.
+
+2. **Subscribe triggers setUp** — when `spinney.subscribe(...)` is called, RxJS executes the subscriber function, which immediately calls the private `setUp()` method. Any extra handlers beyond `next`, `error`, and `complete` (such as `onattribute` and `ontext`) are captured from the subscribe options and stored in `this.cbs` for use during HTML parsing.
+
+3. **robots.txt fetch** — `setUp()` calls `httpText('/robots.txt')`, which GETs the constructed robots.txt URL and pipes the response stream through `ParseText`. The resulting object exposes the parsed `forbidden` set of Disallow paths and a `isSiteMap` flag.
+
+4. **Forbidden set is stored** — the Disallow paths returned from `ParseText` are written into `this.forbidden` via `setForbidden()`. From this point any URL whose path matches an entry in `forbidden` will be rejected by `_isForbidden()`, unless the `overide` option is `true`.
+
+5. **Seed selection** — if `context.isSiteMap` is `true`, the sitemap URL found in `robots.txt` is used as the initial entry in the crawl queue; otherwise `this.decodeURL.origin` (e.g. `https://example.com`) is used. Either way, an array of one URL is passed to `_setUp(sites)` to start the recursive crawl loop.
+
+6. **Batched page fetching** — `_setUp(sites)` processes the current URL batch in groups of four with `Promise.all`. For each URL, `httpXMLOrDocument(site)` makes an HTTP GET request. If the response `Content-Type` header contains `"xml"`, the body is parsed as a sitemap and its URLs are returned for the next round. Otherwise the body is piped through `htmlparser2`'s `WritableStream`.
+
+7. **href collection and filtering** — the `onattribute` handler inside `httpXMLOrDocument` watches for every HTML attribute named `href` and pushes its value into a local `sites` array. When the stream finishes, `getApproved(sites)` runs: it resolves relative paths to full URLs, validates each with a URL regex, checks that the hostname matches the origin, and rejects any URL already in the `seen` set or matching a Disallow rule.
+
+8. **next and complete events** — `subscriber.next(site)` fires immediately after a page's stream finishes, passing the crawled URL string to your `next` handler. The approved hrefs discovered on that page are recursively queued. When `_setUp` is called with an empty array, `subscriber.complete()` fires and `pause()` sets `isProcessing` to `false`, cleanly ending the crawl.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Add Spinney to your project with npm, yarn, or pnpm and configure TypeScript.
+  </Card>
+  <Card title="Quickstart" icon="bolt" href="/quickstart">
+    Build your first working scraper in under 5 minutes.
+  </Card>
+</CardGroup>
