@@ -1,7 +1,7 @@
 ---
-title: "Spinney: Observable Web Scraper for Node.js"
+title: "Spinney: Observable Web Scraper for Node.js Projects"
 sidebarTitle: "Introduction"
-description: "Spinney is a flexible, efficient Node.js web scraper powered by RxJS Observables. Stream crawled pages, respect robots.txt, and traverse XML sitemaps automatically."
+description: "Spinney is a Node.js web scraper built on RxJS Observables. Stream crawled URLs as they are fetched, respect robots.txt rules, and traverse XML sitemaps."
 ---
 
 Spinney is a Node.js web scraping library that models the entire crawl process as an RxJS Observable stream. Instead of collecting all results upfront, Spinney emits each successfully crawled URL as a `next` event the moment it is processed — letting your code react in real time. It automatically fetches and parses a target site's `robots.txt` file to respect Disallow rules, discovers seed URLs from XML sitemaps when available, deduplicates visited pages, and retries failed requests with back-off. Because Spinney is written in TypeScript and ships its own type definitions, it slots naturally into both TypeScript and plain JavaScript projects.
@@ -12,7 +12,7 @@ Spinney is published to npm as `spinney` (version **1.0.2**) under the MIT licen
 
 When you call `spinney.subscribe(...)`, the library begins crawling and calls `subscriber.next(url)` for every page that is successfully fetched and parsed. When the crawl queue is exhausted it calls `subscriber.complete()`. If an unrecoverable error occurs it calls `subscriber.error(error)`.
 
-Under the hood Spinney relies on three runtime libraries:
+Under the hood Spinney relies on four runtime libraries:
 
 | Library | Version | Role |
 |---|---|---|

@@ -1,16 +1,16 @@
 ---
-title: "TypeScript Types and Constants Reference"
+title: "TypeScript Types, Constants, and Internals Reference"
 sidebarTitle: "Types"
-description: "Complete TypeScript type definitions used in Spinney: Options, internal constants MAX_RETRIES and RegExps, and the ParseText and ParseXML internal classes."
+description: "Reference for Spinney TypeScript types: Options, constants MAX_RETRIES and RegExps, and internal classes ParseText, ParseXML, and StringWritable."
 ---
 
-Spinney ships its type definitions in `lib/index.d.ts`, generated from the TypeScript source at build time. Only two things are part of the public API: the `Spinney` class itself and the `Options` type. The internal helper classes (`ParseText`, `ParseXML`, `StringWritable`) and the constants module are not re-exported, but they are documented here for completeness and for developers who want to understand how the library works under the hood.
+Spinney ships its type definitions in `lib/index.d.ts`, generated from the TypeScript source at build time. Only the `Spinney` class itself is part of the public API — `module.exports = Spinney` is the sole export. The `Options` type, internal helper classes (`ParseText`, `ParseXML`, `StringWritable`), and the constants module are not re-exported, but they are documented here for completeness and for developers who want to understand how the library works under the hood.
 
 ---
 
 ## `Options`
 
-`Options` is the only exported type besides the `Spinney` class. It is the shape of the second argument to the `Spinney` constructor.
+`Options` is the type of the second argument to the `Spinney` constructor. It is defined in `src/types.ts` but is not re-exported from the package entry point, so it cannot be imported with `import type { Options } from 'spinney'` in application code. Use it as an inline type annotation or reference the shape directly.
 
 ```typescript
 type Options = {
@@ -35,14 +35,11 @@ type Options = {
 
 ```typescript
 import Spinney from 'spinney';
-import type { Options } from 'spinney'; // type-only import
 
-const options: Options = {
+const spinney = new Spinney('https://example.com/', {
   overide: false,
   debug: true,
-};
-
-const spinney = new Spinney('https://example.com/', options);
+});
 ```
 
 ---
@@ -65,14 +62,15 @@ A collection of pre-compiled regular expressions and factory functions used inte
 
 | Key | Pattern / Description |
 |-----|----------------------|
-| `Allow` | `/^([Aa]llow:) (\/.+)$/g` — matches `Allow:` lines in robots.txt |
-| `Disallow` | `/^([Dd]isallow:) (\/.+)$/g` — matches `Disallow: /path` lines in robots.txt |
+| `Allow` | `/^([Aa]llow:) (\\/.+)$/g` — matches `Allow:` lines in robots.txt |
+| `Disallow` | `/^([Dd]isallow:) (\\/.+)$/g` — matches `Disallow: /path` lines in robots.txt |
+| `Host` | `/^([Hh]ost:) (.+)$/g` — matches `Host:` lines in robots.txt |
+| `NewLine` | `/[^\\r\\n]+/g` — splits robots.txt byte chunks into individual lines |
 | `SiteMap` | `/^([Ss]itemap:) (.+)$/` — matches `Sitemap: https://...` lines in robots.txt |
-| `UserAgent` | `/^([Uu]ser-[Aa]gent:) (.+)$/g` — matches `User-agent:` lines to detect `*` (all bots) blocks |
-| `ForwardSlashWord` | `/\/(\w+)/gi` — matches path segments beginning with `/`; used in `isMatch()` to validate that a test path has at least one segment |
-| `HttpOrHttps` | Full URL pattern — matches `http://` or `https://` URLs within text |
-| `NewLine` | `/[^\r\n]+/g` — splits robots.txt byte chunks into individual lines |
 | `SpecialCharacter` | `/[^a-zA-Z0-9 ]/g` — matches non-alphanumeric characters |
+| `UserAgent` | `/^([Uu]ser-[Aa]gent:) (.+)$/g` — matches `User-agent:` lines to detect `*` (all bots) blocks |
+| `ForwardSlashWord` | `/\\/(\\w+)/gi` — matches path segments beginning with `/`; used in `isMatch()` to validate that a test path has at least one segment |
+| `HttpOrHttps` | `/[-a-zA-Z0-9@:%._+~#=]{1,256}...` — matches HTTP or HTTPS URLs within text |
 | `getURL()` | Factory function — returns a new `RegExp` that validates whether a string is a syntactically correct absolute URL. Called by `isApproved()` on every candidate URL. |
 | `getHostnameAndPathname(hostname, pathname)` | Factory function — returns `new RegExp('(.*\\.)?<hostname>.*(<pathname>)')`. Built dynamically in `isMatch()` using the scraper's hostname and the disallow path being tested. |
 
@@ -80,7 +78,7 @@ A collection of pre-compiled regular expressions and factory functions used inte
 
 ## Internal classes
 
-These classes are not exported from `lib/index.js` and are instantiated privately inside `Spinney`. They are documented here for developers reading the source.
+These classes are not exported from `lib/index.js` — `module.exports = Spinney` is the only export. They are instantiated privately inside `Spinney` and documented here for developers reading the source.
 
 ### `ParseText`
 
@@ -92,6 +90,15 @@ Located at `src/ParseText.ts`. Processes a streaming robots.txt response. Its `w
 
 Calling `end()` returns `{ forbidden, site, isSiteMap }` and resets the instance. The `forbidden` Set is passed to `Spinney.setForbidden()` to populate the instance-level `forbidden` Set used by `_isForbidden()`.
 
+Instance fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `site` | `string` | The sitemap URL extracted from the `Sitemap:` line, if present. |
+| `forbidden` | `Set<string>` | Disallowed paths collected from `Disallow:` lines for the `*` user-agent block. |
+| `isParsing` | `boolean` | `true` while inside a `User-agent: *` block; controls whether `Disallow:` lines are collected. |
+| `isSiteMap` | `boolean` | `true` if a `Sitemap:` line was found and a URL was successfully extracted. |
+
 ### `ParseXML`
 
 Located at `src/ParseXML.ts`. Wraps `xml2js.parseStringPromise` to extract URLs from sitemap XML documents. Its `promise(data: string)` method accepts the full buffered XML string and returns a Promise that resolves to `{ sites: string[] }`.
@@ -102,11 +109,24 @@ Supports two XML formats:
 
 The returned `sites` array is fed back into `_setUp()` as the next URL batch to crawl.
 
+Instance fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `context` | `{ sites: string[] }` | Accumulates the list of URL strings extracted from the parsed XML sitemap. |
+
 ### `StringWritable`
 
 Located at `src/StringWritable.ts`. A `node:stream.Writable` subclass that accumulates streamed response chunks into a single string. Uses a `StringDecoder` from `node:string_decoder` to correctly handle multi-byte UTF-8 characters that may span chunk boundaries. The accumulated string is available on `.string` after the stream finishes.
 
 Used to buffer the full response body of XML sitemap requests before passing the complete string to `ParseXML.promise()`.
+
+Instance fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `string` | `any` | The accumulated response body string, built up as chunks arrive. |
+| `decode` | `StringDecoder` | Node.js `StringDecoder` instance used to handle multi-byte character boundaries between chunks. |
 
 ### `Not(condition)`
 
@@ -118,7 +138,7 @@ function Not(condition: boolean): boolean {
 }
 ```
 
-A small readability utility that returns `true` when `condition` is strictly `false`. Used throughout the Spinney source as a readable alternative to the `!` operator — for example, `if (Not(index === -1))` reads as "if the index was found".
+A small readability utility that returns `true` when `condition` is strictly `false` (using `===` equality, not logical negation). Used throughout the Spinney source as a readable alternative to the `!` operator — for example, `if (Not(index === -1))` reads as "if the index was found".
 
 <Note>
   `ParseText`, `ParseXML`, `StringWritable`, and `Not` are internal implementation details. They are not exported from `lib/index.js` and should not be imported directly in application code. Their interfaces may change between minor versions without a semver-breaking change.

@@ -1,10 +1,10 @@
 ---
-title: "Configure Spinney with Options and Axios Settings"
+title: "Configuring Spinney with Options and Axios Settings"
 sidebarTitle: "Configuration"
 description: "Learn how to configure Spinney's scraping behavior with the Options object and pass custom Axios request configuration for headers, timeouts, and proxies."
 ---
 
-The `Spinney` constructor accepts up to three arguments: the target URL string, an optional `Options` object that controls scraping behavior, and an optional `AxiosRequestConfig` object that is passed directly to `axios.create()`. The Axios config is merged with `{ responseType: 'stream' }` — that single field is always forced by Spinney and cannot be overridden — but everything else, including headers, authentication, timeouts, and proxies, can be configured freely.
+The `Spinney` constructor accepts up to three arguments: the target URL string, an optional `Options` object that controls scraping behavior, and an optional `AxiosRequestConfig` object that is passed directly to `axios.create()`. The Axios config is merged with `{ responseType: 'stream' }` as the base — your config is applied on top, so any key you provide, including `responseType`, will override the default. In practice you should leave `responseType` as `'stream'` because Spinney pipes response data incrementally; overriding it will break parsing.
 
 ## The `Options` type
 

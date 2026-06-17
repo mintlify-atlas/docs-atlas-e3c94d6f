@@ -1,10 +1,10 @@
 ---
-title: "Spinney Class — Constructor and Initialization"
+title: "Spinney Class — Constructor and Initialization Guide"
 sidebarTitle: "Spinney"
-description: "Full reference for the Spinney constructor. Accepts a target URL, optional Options object, and optional AxiosRequestConfig to customize HTTP behavior."
+description: "Full API reference for the Spinney constructor. Takes a target URL, optional Options flags, and optional AxiosRequestConfig for HTTP customisation."
 ---
 
-`Spinney` is the main — and only — export of the `spinney` package. It extends `Observable<any>` from RxJS, which means any RxJS operator (`pipe`, `take`, `filter`, `tap`, and so on) or subscription method can be applied to it directly. Internally, the constructor sets up the Axios HTTP instance with `responseType: 'stream'` locked in, initializes a deduplication `seen` Set and a `forbidden` Set (for robots.txt paths), and defines the Observable source function that calls `setUp()` on subscribe — `setUp()` triggers the robots.txt fetch, populates `forbidden`, and then kicks off the recursive batch crawl.
+`Spinney` is the main — and only — export of the `spinney` package. It extends `Observable<any>` from RxJS, which means any RxJS operator (`pipe`, `take`, `filter`, `tap`, and so on) or subscription method can be applied to it directly. Internally, the constructor sets up the Axios HTTP instance with `responseType: 'stream'` locked in, initialises a deduplication `seen` Set and a `forbidden` Set (for robots.txt paths), and defines the Observable source function that calls `setUp()` on first subscribe. `setUp()` triggers the robots.txt fetch, populates `forbidden`, then calls `resume()` to set `isProcessing` to `true` and kicks off the recursive batch crawl.
 
 ## Import
 
@@ -45,7 +45,7 @@ new Spinney(
 </ParamField>
 
 <ParamField path="config" type="AxiosRequestConfig">
-  Passed directly to `axios.create()`. The property `responseType: 'stream'` is always set by Spinney and cannot be overridden — all other Axios config (timeouts, headers, proxy, etc.) is respected as-is.
+  Passed directly to `axios.create()` via `Object.assign({ responseType: 'stream' }, config ?? {})`. The property `responseType: 'stream'` is always set by Spinney and cannot be overridden — all other Axios config (timeouts, headers, proxy, etc.) is respected as-is.
 </ParamField>
 
 ## Throws
@@ -57,19 +57,20 @@ The constructor calls `new URL(site)` synchronously. If `site` is not a valid UR
 expect(() => new Spinney('')).toThrow();
 ```
 
-## Internal state initialized
+## Internal state initialised
 
 When the constructor runs, it sets up the following private fields that drive the crawl lifecycle:
 
 - **`cbs`** — an object registry that stores htmlparser2 handler callbacks (e.g. `onattribute`, `ontext`) passed in through `subscribe()`, kept separate from the RxJS observer callbacks.
 - **`debug`** — either a no-op function (when `options.debug` is `false` or omitted) or `console.error(error?.message)` (when `options.debug` is `true`). Called on non-fatal internal errors.
 - **`isOveride`** — boolean derived from `options?.overide ?? false`. When `true`, the `forbidden` Set is bypassed and all URLs are treated as crawlable.
-- **`isProcessing`** — starts as `false`. Flipped to `true` by `resume()` after robots.txt is fetched, and back to `false` by `pause()` when the crawl ends or a fatal error occurs.
+- **`isProcessing`** — starts as `false`. Flipped to `true` by `resume()` once robots.txt has been fetched and parsed inside the `httpText('/robots.txt').then(...)` callback in `setUp()`, and back to `false` by `pause()` when the crawl ends or a fatal error occurs.
 - **`forbidden`** — a `Set<string>` of disallowed path patterns parsed from the site's `robots.txt`. Initially empty; populated by `setForbidden()` once robots.txt has been fetched.
 - **`seen`** — a `Set<string>` of URLs already visited or queued. Used to deduplicate the crawl queue so the same page is never fetched twice.
 - **`site`** — the raw `site` string passed to the constructor, stored for use in `getURL()`.
 - **`decodeURL`** — a `URL` object constructed from `site`, used to extract `hostname` and `origin` for URL matching.
-- **`axiosInstance`** — the Axios instance created with `axios.create({ responseType: 'stream', ...config })`.
+- **`axiosInstance`** — the Axios instance created with `axios.create(Object.assign({ responseType: 'stream' }, config ?? {}))`.
+- **`subscriber`** — the RxJS subscriber object captured inside the Observable source function when `subscribe()` is first called. Used internally to emit `next`, `error`, and `complete` notifications.
 
 ## Example
 
@@ -90,5 +91,5 @@ const spinney = new Spinney(
 ```
 
 <Note>
-  `isProcessing` starts as `false` at construction time. It is set to `true` by `resume()` only after the robots.txt response has been received and parsed. The internal batch loop (`_setUp`) checks `isProcessing` before processing each URL batch — no crawling occurs until `resume()` has been called.
+  `isProcessing` starts as `false` at construction time. It is set to `true` by `resume()` only after the robots.txt response has been received and parsed inside `setUp()`. The internal batch loop (`_setUp`) checks `isProcessing` before processing each URL batch — no crawling occurs until `resume()` has been called.
 </Note>

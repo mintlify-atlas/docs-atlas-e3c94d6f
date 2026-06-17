@@ -1,5 +1,5 @@
 ---
-title: "Handle Errors and Control Crawl Flow in Spinney"
+title: "Error Handling, Retries, and Crawl Control in Spinney"
 sidebarTitle: "Error Handling"
 description: "Learn how Spinney surfaces errors through the RxJS subscriber, how the debug option enables logging, and how to pause and resume a crawl programmatically."
 ---
@@ -75,7 +75,7 @@ spinney.pause();
 spinney.resume();
 ```
 
-`pause()` is called automatically in three situations: when `subscriber.complete()` is called (the crawl finished naturally), when `subscriber.error()` is called after retry exhaustion, and in the Observable's teardown function returned by `setUp()` (triggered by `unsubscribe()`).
+`pause()` is called automatically in three situations: when `subscriber.complete()` is called (the crawl finished naturally), when the outer catch in `httpXMLOrDocument()` calls `subscriber.error()` (including after retry exhaustion), and in the Observable's teardown function returned by `setUp()` (triggered by `unsubscribe()`).
 
 <Warning>
 After an error is emitted, the RxJS Observable is in a terminal state. Calling `resume()` alone will not restart the crawl — the subscriber will not receive any further events. To retry after a fatal error, create a new `Spinney` instance with the same configuration and call `subscribe()` again.

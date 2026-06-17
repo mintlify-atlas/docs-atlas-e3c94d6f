@@ -1,7 +1,7 @@
 ---
-title: "How Spinney Handles robots.txt Rules"
+title: "robots.txt Parsing and Disallow Enforcement in Spinney"
 sidebarTitle: "robots.txt"
-description: "Spinney automatically fetches and parses robots.txt before crawling. Learn how Disallow rules are enforced and how to override them with the overide option."
+description: "Spinney auto-fetches robots.txt before crawling. Disallow rules under User-agent: * are enforced, and the overide option bypasses all path restrictions."
 ---
 
 Before Spinney issues a single crawl request, it fetches `/robots.txt` from the target domain. The file is streamed into the internal `ParseText` class, which reads it line by line, extracts every `Disallow:` path listed under `User-agent: *`, and stores those paths in a `Set<string>` called `forbidden`. Every candidate URL is checked against this set before it is queued, so restricted paths are never fetched.
